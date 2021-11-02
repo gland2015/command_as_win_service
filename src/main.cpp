@@ -167,6 +167,9 @@ void WINAPI ServiceMain(int argc, char **argv)
 void WINAPI ServiceHandler(DWORD fdwControl)
 {
     UINT uExitCode = NULL;
+    DWORD dwPid = NULL;
+    char command[1024];
+
     switch (fdwControl)
     {
     case SERVICE_CONTROL_STOP:
@@ -182,7 +185,13 @@ void WINAPI ServiceHandler(DWORD fdwControl)
         ServiceStatus.dwWin32ExitCode = 0;
         ServiceStatus.dwCheckPoint = 4;
 
-        TerminateProcess(pi.hProcess, uExitCode);
+        dwPid = GetProcessId(pi.hProcess);
+        if (dwPid)
+        {
+            sprintf_s(command, "taskkill /f /t /pid %lu", dwPid);
+            system(command);
+        }
+
         if (pi.hProcess)
         {
             CloseHandle(pi.hProcess);
