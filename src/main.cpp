@@ -1,99 +1,62 @@
-#include <iostream>
-#include <string>
+#include "./base.h"
 #include "stdio.h"
 #include "tchar.h"
 #include <atlstr.h>
-using namespace std;
 
 #define NOMINMAX 1
-#define byte win_byte_override
 #include "Windows.h"
 
 #define SERVICE_NAME TEXT("")
 SERVICE_STATUS ServiceStatus = {0};
 SERVICE_STATUS_HANDLE hServiceStatusHandle = NULL;
 
-STARTUPINFO si;
 PROCESS_INFORMATION pi;
+HANDLE hFile = NULL;
 
+CmdArgs args;
+
+extern bool execCmdline(PROCESS_INFORMATION &pi, HANDLE &hFile, const string &cmdline, bool waitComplete, const string &workdir, LogOptions &logOptions, unsigned int acp = 65001);
+
+void runTask();
 void WINAPI ServiceMain(int argc, char **argv);
 void WINAPI ServiceHandler(DWORD fdwControl);
 
-string pCommand = "";
-string pCwd = "";
-
 int main(int argc, char **argv)
 {
+    args = parseCmdArgs(argc, argv);
 
-    char **temp = argv;
-
-    string command = "";
-    string cwd = "";
-    string type = "";
-    char line = '-';
-
-    while (*temp != NULL)
+    if (args.debug)
     {
-        string a = *temp;
-        ++temp;
-
-        bool isOpt = false;
-
-        if (a.length() > 2)
+        string command = "";
+        char **temp = argv;
+        while (*temp != NULL)
         {
-            char a_0 = a.at(0);
-            char a_1 = a.at(1);
-
-            if (a_0 == line && a_1 == line)
-            {
-                isOpt = true;
-            }
+            string a = *temp;
+            ++temp;
+            command += a + " ";
         }
 
-        if (isOpt)
-        {
-            if (a == "--cmd")
-            {
-                type = "cmd";
-            }
-            else if (a == "--cwd")
-            {
-                type = "cwd";
-            }
-            else
-            {
-                type = "";
-            }
-        }
-        else
-        {
-            if (type == "cmd")
-            {
-                if (command.length() == 0)
-                {
-                    command = a;
-                }
-                else
-                {
-                    command += " " + a;
-                }
-            }
-            else if (type == "cwd")
-            {
-                if (cwd.length() == 0)
-                {
-                    cwd = a;
-                }
-                else
-                {
-                    cwd += " " + a;
-                }
-            }
-        }
+        path logPath = getCurExeDir();
+        string filename = getCurExeFileName();
+        filename += ".debug_info.txt";
+        logPath /= filename;
+
+        ofstream outfile;
+        outfile.open(logPath);
+        outfile << "command: " << command << endl;
+        outfile << "cmd: " << args.cmd << endl;
+        outfile << "cwd: " << args.cwd << endl;
+        outfile << "logFile: " << args.logFile << endl;
+        outfile << "logIsAppend: " << args.logIsAppend << endl;
+        outfile << "logIsLogHead: " << args.logIsLogHead << endl;
+        outfile << "logIsLogHead: " << args.logIsLogHead << endl;
+        outfile << "logLimit: " << args.logLimit << endl;
+        outfile.close();
     }
 
-    pCommand = command;
-    pCwd = cwd;
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+    setlocale(LC_ALL, ".utf8");
 
     // 启动服务
     SERVICE_TABLE_ENTRY ServiceTable[2];
@@ -105,13 +68,34 @@ int main(int argc, char **argv)
     return 0;
 }
 
+void runTask()
+{
+    // 添加运行任务
+    if (args.cwd.length() == 0)
+    {
+        args.cwd = getCurExeDir();
+    }
+
+    LogOptions logOpt;
+    if (args.logFile.length())
+    {
+        logOpt.isLog = true;
+        logOpt.filepath = args.logFile;
+        logOpt.isAppend = args.logIsAppend;
+        logOpt.isLogHead = args.logIsLogHead;
+        logOpt.limit = args.logLimit;
+    }
+    else
+    {
+        logOpt.isLog = false;
+    }
+
+    execCmdline(pi, hFile, args.cmd, true, args.cwd, logOpt, GetACP());
+}
+
 // ---------------服务主函数----------------
 void WINAPI ServiceMain(int argc, char **argv)
 {
-    ZeroMemory(&si, sizeof(si));
-    si.cb = sizeof(si);
-    ZeroMemory(&pi, sizeof(pi));
-
     ServiceStatus.dwServiceType = SERVICE_WIN32;
     ServiceStatus.dwCurrentState = SERVICE_START_PENDING;
     ServiceStatus.dwControlsAccepted = SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN | SERVICE_ACCEPT_PAUSE_CONTINUE;
@@ -134,24 +118,7 @@ void WINAPI ServiceMain(int argc, char **argv)
         DWORD nError = GetLastError();
     }
 
-    // 添加运行任务
-    string workdir = pCwd;
-    string cmdstr = pCommand;
-    LPSTR lpcmdstr = &cmdstr.front();
-    if (CreateProcessA(NULL, lpcmdstr, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, workdir.length() ? workdir.c_str() : NULL, &si, &pi))
-    {
-        WaitForSingleObject(pi.hProcess, INFINITE);
-        if (pi.hProcess)
-        {
-            CloseHandle(pi.hProcess);
-            pi.hProcess = NULL;
-        }
-        if (pi.hThread)
-        {
-            CloseHandle(pi.hThread);
-            pi.hThread = NULL;
-        }
-    }
+    runTask();
 
     ServiceStatus.dwControlsAccepted = 0;
     ServiceStatus.dwCurrentState = SERVICE_STOPPED;
@@ -197,10 +164,17 @@ void WINAPI ServiceHandler(DWORD fdwControl)
             CloseHandle(pi.hProcess);
             pi.hProcess = NULL;
         }
+
         if (pi.hThread)
         {
             CloseHandle(pi.hThread);
             pi.hThread = NULL;
+        }
+
+        if (hFile)
+        {
+            CloseHandle(hFile);
+            hFile = NULL;
         }
         break;
     default:
